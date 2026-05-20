@@ -1,6 +1,6 @@
 # Memory-Aware Semi-Markov Framework for Longitudinal Single-Cell Transcriptomics
 
-## Overview
+## Overview 
 
 This repository contains the R implementation of a memory-aware Semi-Markov framework for modelling, validation, and forecasting of longitudinal single-cell RNA sequencing (scRNA-seq) data.
 
