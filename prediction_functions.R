@@ -2,7 +2,7 @@
 #' @description Core prediction wrapper for forward validation, backward validation,
 #' and future forecasting.
 #' @author Taras Lukashiv and collaborators
-#' @date 2026-05-06
+#' @date 2026-05-20
 
 
 # =============================================================================
@@ -18,7 +18,7 @@
 #'
 #' The function supports:
 #' - forward validation / forecasting;
-#' - backward validation / backcasting.
+#' - backward validation / backcasting via time-axis reflection.
 #'
 #' @param df Data frame containing a numeric TP column and gene expression columns.
 #' @param gene Character. Gene column name to model.
@@ -45,10 +45,9 @@ predict_gene_expression <- function(df,
                                     N_SIM = 100,
                                     N_Steps = 200,
                                     memory_decay = 1,
-                                    direction = "forward" # "backward"
-                                    ) {
+                                    direction = c("forward", "backward")) {
   
-  #direction <- match.arg(direction)
+  direction <- match.arg(direction)
   
   # ---------------------------------------------------------------------------
   # 0. Basic checks
@@ -74,6 +73,18 @@ predict_gene_expression <- function(df,
     stop("TP column contains NA values after numeric conversion.")
   }
   
+  if (!is.numeric(start_tp) || !is.numeric(end_tp) || !is.numeric(prediction_tp)) {
+    stop("start_tp, end_tp, and prediction_tp must be numeric.")
+  }
+  
+  if (N_SIM < 1) {
+    stop("N_SIM must be at least 1.")
+  }
+  
+  if (N_Steps < 1) {
+    stop("N_Steps must be at least 1.")
+  }
+  
   # ---------------------------------------------------------------------------
   # 1. Prepare gene-level data
   # ---------------------------------------------------------------------------
@@ -94,16 +105,34 @@ predict_gene_expression <- function(df,
       is.finite(df_temp$gene_value),
   ]
   
+  if (nrow(df_temp) == 0) {
+    stop("No finite values available for gene: ", gene)
+  }
+  
   # ---------------------------------------------------------------------------
-  #  Change time points by directions
+  # 2. Time-axis handling
+  # ---------------------------------------------------------------------------
+  # Forward:
+  #   Uses biological time directly.
+  #
+  # Backward:
+  #   Reflects time around max observed TP:
+  #     TP* = max(TP) - TP
+  #   This converts backcasting into a forward prediction problem in reflected
+  #   time, while returned metadata is converted back to biological time.
   # ---------------------------------------------------------------------------
   
-  if(direction =="backward"){
-    max_tp = max(df_temp$TP)
-    df_temp$TP = max_tp - df_temp$TP
-    start_tp = max_tp - start_tp
-    end_tp = max_tp - end_tp
-    prediction_tp = max_tp - prediction_tp
+  max_tp <- max(df_temp$TP, na.rm = TRUE)
+  
+  original_start_tp <- start_tp
+  original_end_tp <- end_tp
+  original_prediction_tp <- prediction_tp
+  
+  if (direction == "backward") {
+    df_temp$TP <- max_tp - df_temp$TP
+    start_tp <- max_tp - start_tp
+    end_tp <- max_tp - end_tp
+    prediction_tp <- max_tp - prediction_tp
   }
   
   all_tps <- sort(unique(df_temp$TP))
@@ -113,30 +142,35 @@ predict_gene_expression <- function(df,
   }
   
   if (!prediction_tp %in% all_tps && prediction_tp <= max(all_tps)) {
-    stop("prediction_tp is inside observed range but not present in df$TP.")
+    stop("prediction_tp is inside the observed range but not present in df$TP.")
   }
- 
+  
   # ---------------------------------------------------------------------------
-  # 2. Define training timepoints
+  # 3. Define training timepoints
   # ---------------------------------------------------------------------------
+  
   train_tps <- all_tps[
-    all_tps >= min(c(start_tp,end_tp)) &
-      all_tps <= max(c(start_tp,end_tp))
-    ]
+    all_tps >= min(c(start_tp, end_tp)) &
+      all_tps <= max(c(start_tp, end_tp))
+  ]
+  
   train_tps <- sort(train_tps)
   
   if (length(train_tps) < 2) {
     stop("Not enough training timepoints.")
   }
   
-  # For validation, prediction_tp may be observed.
-  # For forecasting, prediction_tp may be outside the observed range.
+  # In reflected time, both forward prediction and backward prediction are
+  # simulated as forward extrapolation.
   if (prediction_tp <= max(train_tps)) {
-    stop("For forward prediction, prediction_tp must be greater than max(train_tps).")
+    stop(
+      "prediction_tp must be greater than max(train_tps) after time-axis handling. ",
+      "Check start_tp, end_tp, prediction_tp, and direction."
+    )
   }
   
   # ---------------------------------------------------------------------------
-  # 3. Estimate mixture parameters
+  # 4. Estimate mixture parameters
   # ---------------------------------------------------------------------------
   
   param_df_all <- estimate_mixture_params(
@@ -156,8 +190,7 @@ predict_gene_expression <- function(df,
   }
   
   # ---------------------------------------------------------------------------
-  # 4. Reorder parameter table according to temporal direction
-  #    This is essential for backward transition estimation.
+  # 5. Reorder parameter table according to the training timeline
   # ---------------------------------------------------------------------------
   
   param_train$TP_order <- factor(
@@ -167,7 +200,6 @@ predict_gene_expression <- function(df,
   
   param_train <- param_train[order(param_train$TP_order), ]
   param_train$TP_order <- NULL
-  
   param_train$TP <- as.numeric(as.character(param_train$TP))
   
   state_dim <- max(table(param_train$TP))
@@ -184,7 +216,7 @@ predict_gene_expression <- function(df,
   }
   
   # ---------------------------------------------------------------------------
-  # 5. Memory weights
+  # 6. Memory weights
   # ---------------------------------------------------------------------------
   
   Weights <- exp(-memory_decay * (max(train_tps) - train_tps))
@@ -192,7 +224,7 @@ predict_gene_expression <- function(df,
   un_tr <- train_tps[train_tps < max(train_tps)]
   
   if (length(un_tr) == 0) {
-    stop("Not enough transition timepoints for forward prediction.")
+    stop("Not enough transition timepoints for prediction.")
   }
   
   Weights_tr <- exp(-memory_decay * (max(un_tr) - un_tr))
@@ -208,7 +240,7 @@ predict_gene_expression <- function(df,
   }
   
   # ---------------------------------------------------------------------------
-  # 6. Transition matrix
+  # 7. Transition matrix
   # ---------------------------------------------------------------------------
   
   Prob <- build_transition_matrix(
@@ -236,7 +268,7 @@ predict_gene_expression <- function(df,
   Prob <- normalize_rows(Prob)
   
   # ---------------------------------------------------------------------------
-  # 7. Weighted state parameters
+  # 8. Weighted state parameters
   # ---------------------------------------------------------------------------
   
   par_check <- get_weighted_check_params(
@@ -254,7 +286,7 @@ predict_gene_expression <- function(df,
   }
   
   # ---------------------------------------------------------------------------
-  # 8. Initial state probabilities
+  # 9. Initial state probabilities
   # ---------------------------------------------------------------------------
   
   first_tp <- train_tps[1]
@@ -273,10 +305,9 @@ predict_gene_expression <- function(df,
   }
   
   # ---------------------------------------------------------------------------
-  # 9. Simulation timeline
+  # 10. Simulation timeline
   # ---------------------------------------------------------------------------
   
-  # Biological and simulation time are aligned.
   Times_sim <- seq(min(train_tps), max(train_tps))
   Times_forec <- c(prediction_tp)
   
@@ -285,7 +316,7 @@ predict_gene_expression <- function(df,
   }
   
   # ---------------------------------------------------------------------------
-  # 10. Stochastic simulation
+  # 11. Stochastic simulation
   # ---------------------------------------------------------------------------
   
   simulation_res <- SIMUL_PROC_rand_init(
@@ -305,7 +336,7 @@ predict_gene_expression <- function(df,
   }
   
   # ---------------------------------------------------------------------------
-  # 11. Extract target prediction
+  # 12. Extract target prediction
   # ---------------------------------------------------------------------------
   
   target_idx <- which.min(abs(simulation_res$time - prediction_tp))
@@ -316,52 +347,57 @@ predict_gene_expression <- function(df,
   
   pred_log <- as.numeric(simulation_res$X[, target_idx])
   pred_counts <- 2^pred_log - 1
-  
   pred_counts[pred_counts < 0] <- 0
   
+  X_counts <- 2^simulation_res$X - 1
+  X_counts[X_counts < 0] <- 0
+  
   # ---------------------------------------------------------------------------
-  # 12. Inverse time change for direction = 'backward'
+  # 13. Convert metadata back to biological time for backward mode
   # ---------------------------------------------------------------------------
   
-  if(direction =="backward"){
-    df_temp$TP = max_tp - df_temp$TP
-    start_tp = max_tp - start_tp
-    end_tp = max_tp - end_tp
-    prediction_tp = max_tp - prediction_tp
-    train_tps = max_tp - train_tps
-    Times_sim = max_tp - Times_sim
-    Times_forec = max_tp - Times_forec
-    simulation_res$time = max_tp - simulation_res$time
+  returned_train_tps <- train_tps
+  returned_times_sim <- Times_sim
+  returned_times_forec <- Times_forec
+  returned_simulation_time <- simulation_res$time
+  returned_param_train <- param_train
+  
+  if (direction == "backward") {
+    returned_train_tps <- max_tp - train_tps
+    returned_times_sim <- max_tp - Times_sim
+    returned_times_forec <- max_tp - Times_forec
+    returned_simulation_time <- max_tp - simulation_res$time
+    returned_param_train$TP <- max_tp - returned_param_train$TP
   }
   
   # ---------------------------------------------------------------------------
-  # 13. Return output
+  # 14. Return output
   # ---------------------------------------------------------------------------
   
   return(list(
     gene = gene,
     direction = direction,
     
-    start_tp = start_tp,
-    end_tp = end_tp,
-    prediction_tp = prediction_tp,
+    start_tp = original_start_tp,
+    end_tp = original_end_tp,
+    prediction_tp = original_prediction_tp,
     
-    train_tps = train_tps,
-    simulation_times = Times_sim,
-    forecast_times = Times_forec,
-    target_time = prediction_tp,
+    train_tps = returned_train_tps,
+    simulation_times = returned_times_sim,
+    forecast_times = returned_times_forec,
+    target_time = original_prediction_tp,
     
     pred_log = pred_log,
     pred_counts = pred_counts,
     
     X_log = simulation_res$X,
-    X_counts = 2^simulation_res$X - 1,
-    time = simulation_res$time,
+    X_counts = X_counts,
+    time = returned_simulation_time,
     simulation = simulation_res,
     
     transition_matrix = Prob,
-    parameters = param_train,
-    mixture_parameters = param_train,
+    parameters = returned_param_train,
+    mixture_parameters = returned_param_train,
     weighted_parameters = par_check,
     state_probs = state_probs,
     
