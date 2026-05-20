@@ -1,0 +1,55 @@
+# R session files
+
+.Rhistory
+.RData
+.Ruserdata
+
+# RStudio
+
+.Rproj.user/
+
+# macOS
+
+.DS_Store
+
+# Logs
+
+*.log
+
+# Temporary files
+
+*.tmp
+*.bak
+
+# Output directories
+
+Results_Forward_Validation_New/
+Results_Backward_Validation/
+Results/
+
+# Figures
+
+*.png
+*.pdf
+
+# Tables
+
+*.csv
+
+# Large raw data
+
+data/raw/
+
+# Renv
+
+renv/library/
+renv/staging/
+
+# Cache
+
+cache/
+tmp/
+
+# OS generated files
+
+Thumbs.db
