@@ -232,9 +232,14 @@ predict_gene_expression_backward <- function(df,
   
   if (!is.data.frame(df)) stop("df must be a data frame.")
   if (!"TP" %in% colnames(df)) stop("df must contain TP column.")
+  if (!gene %in% colnames(df)) stop("Gene not found: ", gene)
   
   df_reflected <- df
   df_reflected$TP <- as.numeric(as.character(df_reflected$TP))
+  
+  if (any(is.na(df_reflected$TP))) {
+    stop("TP column contains NA values after numeric conversion.")
+  }
   
   max_tp <- max(df_reflected$TP, na.rm = TRUE)
   min_tp <- min(df_reflected$TP, na.rm = TRUE)
@@ -266,12 +271,53 @@ predict_gene_expression_backward <- function(df,
   )
   
   res$direction <- "backward"
+  
   res$original_start_tp <- start_tp
   res$original_end_tp <- end_tp
   res$original_prediction_tp <- prediction_tp
+  
   res$reflected_start_tp <- start_tp_reflected
   res$reflected_end_tp <- end_tp_reflected
   res$reflected_prediction_tp <- prediction_tp_reflected
+  
+  res$start_tp <- start_tp
+  res$end_tp <- end_tp
+  res$prediction_tp <- prediction_tp
+  res$target_time <- prediction_tp
+  
+  tp_original <- as.numeric(as.character(df$TP))
+  
+  res$train_tps <- sort(
+    unique(tp_original[tp_original <= start_tp & tp_original >= end_tp]),
+    decreasing = TRUE
+  )
+  
+  res$simulation_times_reflected <- res$simulation_times
+  res$forecast_times_reflected <- res$forecast_times
+  res$time_reflected <- res$time
+  
+  res$simulation_times <- res$train_tps
+  res$forecast_times <- prediction_tp
+  res$time <- reflect_tp(res$time_reflected)
+  
+  
+  if (!is.null(res$parameters) && "TP" %in% colnames(res$parameters)) {
+    res$parameters_reflected <- res$parameters
+    res$parameters$TP <- reflect_tp(res$parameters$TP)
+    res$parameters <- res$parameters[
+      order(res$parameters$TP, decreasing = TRUE),
+    ]
+  }
+  
+  if (!is.null(res$mixture_parameters) &&
+      "TP" %in% colnames(res$mixture_parameters)) {
+    
+    res$mixture_parameters_reflected <- res$mixture_parameters
+    res$mixture_parameters$TP <- reflect_tp(res$mixture_parameters$TP)
+    res$mixture_parameters <- res$mixture_parameters[
+      order(res$mixture_parameters$TP, decreasing = TRUE),
+    ]
+  }
   
   return(res)
 }
