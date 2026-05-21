@@ -27,7 +27,7 @@ Simul_BB <- function(TIMES, LEVELS, N_simul, N_steps, PLOT = FALSE) {
       for (j in 2:(N_steps + 1)) {
         X[i, j] <- X[i, j - 1] +
           (b - X[i, j - 1]) / (t1 - time[j - 1]) * h +
-          rnorm(1, sd = sqrt(h))
+          rnorm(1, sd = sqrt(abs(h)))
       }
     }
 
