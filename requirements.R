@@ -7,11 +7,15 @@ required_packages <- c(
   "transport",
   "modeest",
   "mixtools",
+  "mixdist",
+  "DescTools",
   "ggplot2",
   "dplyr",
+  "tidyr",
   "patchwork",
   "ggrepel",
-  "tidyr"
+  "foreach",
+  "doParallel"
 )
 
 install_dependencies <- function(pkgs, install_missing = interactive()) {
@@ -28,7 +32,8 @@ install_dependencies <- function(pkgs, install_missing = interactive()) {
       stop(
         "Missing required packages: ",
         paste(missing_pkgs, collapse = ", "),
-        "\nInstall them manually or run install_dependencies(required_packages, install_missing = TRUE)."
+        "
+Install them manually or run install_dependencies(required_packages, install_missing = TRUE)."
       )
     }
   }

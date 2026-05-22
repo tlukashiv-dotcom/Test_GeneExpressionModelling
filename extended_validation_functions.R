@@ -1,15 +1,134 @@
-#' @title Extended Validation Functions for Dynamic Gene Expression Modelling
-#' @description Extended genome-scale validation utilities, stratified deviation analysis, DE agreement, and calibration checks.
+#' @title Extended Genome-scale Validation Functions
+#' @description Additional manuscript-grade validation utilities:
+#' intermediate-horizon accuracy tables, density comparisons,
+#' stratified deviation distributions, and per-gene DE agreement.
 #' @author Taras Lukashiv and collaborators
-#' @date 2026-05-20
+#' @date 2026-05-06
+
 
 # =============================================================================
-# Functions
+# 1. Accuracy Metrics Helper
 # =============================================================================
 
-# -----------------------------------------------------------------------------
-# 1. generate_horizon_accuracy_table
-# -----------------------------------------------------------------------------
+calculate_accuracy_metrics <- function(p_val_vec, fc_vec, p_method = "BH") {
+  
+  adj_p <- p.adjust(p_val_vec, method = p_method)
+  abs_fc <- abs(fc_vec)
+  
+  out <- c(
+    Success = mean(adj_p >= 0.05 & abs_fc < 1, na.rm = TRUE) * 100,
+    Small_Diff_Signif = mean(adj_p < 0.05 & abs_fc < 1, na.rm = TRUE) * 100,
+    Fail = mean(adj_p < 0.05 & abs_fc >= 1, na.rm = TRUE) * 100,
+    Large_Diff_Insignif = mean(adj_p >= 0.05 & abs_fc >= 1, na.rm = TRUE) * 100
+  )
+  
+  round(out, 2)
+}
+
+
+# =============================================================================
+# 2. Prediction Accuracy Table
+# =============================================================================
+
+generate_prediction_accuracy_table <- function(results_df,
+                                               save_path = NULL,
+                                               latex_path = NULL,
+                                               caption = "Comparative Analysis of Prediction Accuracy Metrics",
+                                               label = "tab:prediction-accuracy") {
+  
+  required_cols <- c(
+    "t_p_val",
+    "Wilcox_p_val",
+    "Wilcox_p_val_rounded",
+    "log2FC",
+    "log2FC_counts"
+  )
+  
+  missing_cols <- setdiff(required_cols, colnames(results_df))
+  
+  if (length(missing_cols) > 0) {
+    stop("Missing required columns: ", paste(missing_cols, collapse = ", "))
+  }
+  
+  t_test_log <- calculate_accuracy_metrics(
+    results_df$t_p_val,
+    results_df$log2FC
+  )
+  
+  wilcox_raw <- calculate_accuracy_metrics(
+    results_df$Wilcox_p_val,
+    results_df$log2FC_counts
+  )
+  
+  wilcox_rounded <- calculate_accuracy_metrics(
+    results_df$Wilcox_p_val_rounded,
+    results_df$log2FC_counts
+  )
+  
+  summary_table <- data.frame(
+    Category_Criteria = c(
+      "Success (p_adj >= 0.05, |log2FC| < 1)",
+      "Small Diff, Signif (p_adj < 0.05, |log2FC| < 1)",
+      "Fail (p_adj < 0.05, |log2FC| >= 1)",
+      "Large Diff, Insignif (p_adj >= 0.05, |log2FC| >= 1)"
+    ),
+    T_test_Log = paste0(t_test_log, "%"),
+    Wilcoxon_Raw = paste0(wilcox_raw, "%"),
+    Wilcoxon_Rounded = paste0(wilcox_rounded, "%"),
+    stringsAsFactors = FALSE
+  )
+  
+  if (!is.null(save_path)) {
+    write.csv(summary_table, save_path, row.names = FALSE)
+  }
+  
+  if (!is.null(latex_path)) {
+    
+    latex_table <- paste0(
+      "\\begin{table}[H]\n",
+      "\\centering\n",
+      "\\caption{", caption, "}\n",
+      "\\label{", label, "}\n",
+      "\\begin{tabular}{|l|c|c|c|}\n",
+      "\\hline\n",
+      "\\textbf{Category (Criteria)} & ",
+      "\\begin{tabular}[c]{@{}c@{}}\\textbf{T-test} \\\\ \\textbf{(Log-data)}\\end{tabular} & ",
+      "\\begin{tabular}[c]{@{}c@{}}\\textbf{Wilcoxon} \\\\ \\textbf{(Raw)}\\end{tabular} & ",
+      "\\begin{tabular}[c]{@{}c@{}}\\textbf{Wilcoxon} \\\\ \\textbf{(Rounded)}\\end{tabular} \\\\ \\hline \n",
+      
+      "Success ($p_{adj} \\\\ge 0.05, |\\\\log_2 \\\\mathrm{FC}| < 1$) & ",
+      "\\textbf{", summary_table$T_test_Log[1], "} & ",
+      summary_table$Wilcoxon_Raw[1], " & ",
+      summary_table$Wilcoxon_Rounded[1], " \\\\ \\hline \n",
+      
+      "Small Diff, Signif ($p_{adj} < 0.05, |\\\\log_2 \\\\mathrm{FC}| < 1$) & ",
+      summary_table$T_test_Log[2], " & ",
+      summary_table$Wilcoxon_Raw[2], " & ",
+      "\\textbf{", summary_table$Wilcoxon_Rounded[2], "} \\\\ \\hline \n",
+      
+      "Fail ($p_{adj} < 0.05, |\\\\log_2 \\\\mathrm{FC}| \\\\ge 1$) & ",
+      summary_table$T_test_Log[3], " & ",
+      summary_table$Wilcoxon_Raw[3], " & ",
+      summary_table$Wilcoxon_Rounded[3], " \\\\ \\hline \n",
+      
+      "Large Diff, Insignif ($p_{adj} \\\\ge 0.05, |\\\\log_2 \\\\mathrm{FC}| \\\\ge 1$) & ",
+      summary_table$T_test_Log[4], " & ",
+      summary_table$Wilcoxon_Raw[4], " & ",
+      summary_table$Wilcoxon_Rounded[4], " \\\\ \\hline\n",
+      "\\end{tabular}\n",
+      "\\end{table}\n"
+    )
+    
+    writeLines(latex_table, con = latex_path)
+  }
+  
+  return(summary_table)
+}
+
+
+# =============================================================================
+# 3. Intermediate-horizon Accuracy Table
+# =============================================================================
 
 generate_horizon_accuracy_table <- function(results_list,
                                             horizon_labels = NULL,
@@ -64,9 +183,10 @@ generate_horizon_accuracy_table <- function(results_list,
   return(out)
 }
 
-# -----------------------------------------------------------------------------
-# 2. analyze_stratified_deviations
-# -----------------------------------------------------------------------------
+
+# =============================================================================
+# 4. Stratified Deviation Distributions
+# =============================================================================
 
 analyze_stratified_deviations <- function(results_df,
                                           n_bins = 10,
@@ -125,9 +245,94 @@ analyze_stratified_deviations <- function(results_df,
   ))
 }
 
-# -----------------------------------------------------------------------------
-# 3. select_representative_genes
-# -----------------------------------------------------------------------------
+
+# =============================================================================
+# 5. Plot Stratified Deviation Distributions
+# =============================================================================
+
+plot_stratified_deviation_distribution <- function(stratified_object,
+                                                   y_var = c("abs_log2FC", "abs_log2FC_counts", "abs_mean_diff"),
+                                                   title = "Stratified Deviation Distribution") {
+  
+  y_var <- match.arg(y_var)
+  
+  df <- stratified_object$data
+  
+  ggplot2::ggplot(df, ggplot2::aes(x = factor(stratum), y = .data[[y_var]])) +
+    ggplot2::geom_violin(fill = "grey80", color = "grey40", alpha = 0.8) +
+    ggplot2::geom_boxplot(width = 0.12, outlier.shape = NA, fill = "white", alpha = 0.7) +
+    ggplot2::labs(
+      title = title,
+      x = "Expression Stratum",
+      y = y_var
+    ) +
+    ggplot2::theme_minimal()
+}
+
+
+# =============================================================================
+# 6. Extended Density Comparisons
+# =============================================================================
+
+plot_extended_density_comparison <- function(gene_name,
+                                             real_counts,
+                                             predicted_counts,
+                                             title_prefix = "Density Comparison",
+                                             save_path = NULL) {
+  
+  plot_df <- data.frame(
+    expression = c(real_counts, predicted_counts),
+    source = factor(
+      c(
+        rep("Real", length(real_counts)),
+        rep("Predicted", length(predicted_counts))
+      ),
+      levels = c("Real", "Predicted")
+    )
+  )
+  
+  p <- ggplot2::ggplot(
+    plot_df,
+    ggplot2::aes(x = expression, fill = source, color = source)
+  ) +
+    ggplot2::geom_density(alpha = 0.45, adjust = 0.5) +
+    ggplot2::geom_jitter(
+      ggplot2::aes(y = -0.002),
+      height = 0.001,
+      alpha = 0.25,
+      size = 0.8
+    ) +
+    ggplot2::labs(
+      title = paste(title_prefix, ":", gene_name),
+      x = "Expression Counts",
+      y = "Density",
+      fill = "Source",
+      color = "Source"
+    ) +
+    ggplot2::theme_minimal() +
+    ggplot2::theme(
+      legend.position = "bottom",
+      plot.title = ggplot2::element_text(face = "bold")
+    )
+  
+  if (!is.null(save_path)) {
+    ggplot2::ggsave(
+      filename = save_path,
+      plot = p,
+      width = 8,
+      height = 5,
+      dpi = 300,
+      bg = "white"
+    )
+  }
+  
+  return(p)
+}
+
+
+# =============================================================================
+# 7. Select Representative Genes
+# =============================================================================
 
 select_representative_genes <- function(results_df,
                                         n_success = 5,
@@ -160,9 +365,10 @@ select_representative_genes <- function(results_df,
   ))
 }
 
-# -----------------------------------------------------------------------------
-# 4. calculate_per_gene_DE_counts
-# -----------------------------------------------------------------------------
+
+# =============================================================================
+# 8. Per-gene DE Counts and Agreement
+# =============================================================================
 
 calculate_per_gene_DE_counts <- function(results_df,
                                          p_col = "t_p_val",
@@ -207,9 +413,10 @@ calculate_per_gene_DE_counts <- function(results_df,
   ))
 }
 
-# -----------------------------------------------------------------------------
-# 5. compare_DE_gene_sets
-# -----------------------------------------------------------------------------
+
+# =============================================================================
+# 9. Compare Observed vs Predicted DE Gene Sets
+# =============================================================================
 
 compare_DE_gene_sets <- function(observed_de_genes,
                                  predicted_de_genes) {
@@ -249,9 +456,10 @@ compare_DE_gene_sets <- function(observed_de_genes,
   )
 }
 
-# -----------------------------------------------------------------------------
-# 6. evaluate_prediction_calibration
-# -----------------------------------------------------------------------------
+
+# =============================================================================
+# 10. Prediction Interval Calibration
+# =============================================================================
 
 evaluate_prediction_calibration <- function(real_counts,
                                             prediction_matrix,
